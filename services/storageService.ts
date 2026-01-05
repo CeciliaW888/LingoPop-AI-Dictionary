@@ -6,33 +6,49 @@ interface LingoPopDB extends DBSchema {
     key: string;
     value: SavedEntry;
   };
+  settings: {
+    key: string;
+    value: any;
+  };
 }
 
 const DB_NAME = 'lingopop-db';
-const STORE_NAME = 'notebook';
-
-const dbPromise = openDB<LingoPopDB>(DB_NAME, 1, {
-  upgrade(db) {
-    if (!db.objectStoreNames.contains(STORE_NAME)) {
-      db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+// Increment version to trigger upgrade
+const dbPromise = openDB<LingoPopDB>(DB_NAME, 2, {
+  upgrade(db, oldVersion, newVersion, transaction) {
+    if (!db.objectStoreNames.contains('notebook')) {
+      db.createObjectStore('notebook', { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('settings')) {
+      db.createObjectStore('settings');
     }
   },
 });
 
 export const storageService = {
   async getAllEntries(): Promise<SavedEntry[]> {
-    return (await dbPromise).getAll(STORE_NAME);
+    return (await dbPromise).getAll('notebook');
   },
 
   async addEntry(entry: SavedEntry): Promise<void> {
-    await (await dbPromise).put(STORE_NAME, entry);
+    await (await dbPromise).put('notebook', entry);
   },
 
   async removeEntry(id: string): Promise<void> {
-    await (await dbPromise).delete(STORE_NAME, id);
+    await (await dbPromise).delete('notebook', id);
   },
   
   async getEntry(id: string): Promise<SavedEntry | undefined> {
-    return (await dbPromise).get(STORE_NAME, id);
+    return (await dbPromise).get('notebook', id);
+  },
+
+  async getGoals(): Promise<string[]> {
+    const data = await (await dbPromise).get('settings', 'goals');
+    // Strict safety check to ensure we always return an array
+    return Array.isArray(data) ? data : [];
+  },
+
+  async saveGoals(goals: string[]): Promise<void> {
+    await (await dbPromise).put('settings', goals, 'goals');
   }
 };

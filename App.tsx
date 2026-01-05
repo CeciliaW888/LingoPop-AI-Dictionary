@@ -8,6 +8,7 @@ import { Notebook } from './components/Notebook';
 import { StudyMode } from './components/StudyMode';
 import { StoryGenerator } from './components/StoryGenerator';
 import { LiveTutor } from './components/LiveTutor';
+import { GoalsManager } from './components/GoalsManager';
 import { useToast } from './context/ToastContext';
 import { storageService } from './services/storageService';
 
@@ -29,8 +30,9 @@ const App: React.FC = () => {
   const { addToast } = useToast();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
-  // Initialize notebook state
+  // Initialize state
   const [notebook, setNotebook] = useState<SavedEntry[]>([]);
+  const [goals, setGoals] = useState<string[]>([]);
 
   // Monitor Online Status
   useEffect(() => {
@@ -54,18 +56,22 @@ const App: React.FC = () => {
 
   // Load from IndexedDB on mount
   useEffect(() => {
-    const loadNotebook = async () => {
+    const loadData = async () => {
       try {
+        // Load Notebook
         const entries = await storageService.getAllEntries();
-        // Sort newest first
         const sorted = entries.sort((a, b) => b.savedAt - a.savedAt);
         setNotebook(sorted);
+        
+        // Load Goals
+        const savedGoals = await storageService.getGoals();
+        setGoals(savedGoals);
       } catch (err) {
-        console.error("Failed to load notebook:", err);
-        addToast("Could not load your notebook.", "error");
+        console.error("Failed to load data:", err);
+        addToast("Could not load your data.", "error");
       }
     };
-    loadNotebook();
+    loadData();
   }, [addToast]);
 
   const addToNotebook = async (entry: DictionaryEntry) => {
@@ -101,6 +107,16 @@ const App: React.FC = () => {
       // Revert
       setNotebook(originalNotebook);
       addToast("Failed to delete.", 'error');
+    }
+  };
+
+  const handleSaveGoals = async (newGoals: string[]) => {
+    setGoals(newGoals);
+    try {
+      await storageService.saveGoals(newGoals);
+    } catch (err) {
+      console.error("Failed to save goals", err);
+      addToast("Failed to save goals", "error");
     }
   };
 
@@ -176,6 +192,15 @@ const App: React.FC = () => {
              nativeLang={nativeLang}
              targetLang={targetLang}
              onBack={() => setCurrentView(AppView.HOME)}
+             goals={goals}
+          />
+        );
+      case AppView.GOALS:
+        return (
+          <GoalsManager 
+            goals={goals}
+            onSave={handleSaveGoals}
+            onBack={() => setCurrentView(AppView.HOME)}
           />
         );
       default:
@@ -237,6 +262,19 @@ const App: React.FC = () => {
                   {notebook.length}
                 </span>
               )}
+            </button>
+            <button
+              onClick={() => setCurrentView(AppView.GOALS)}
+              className={`p-2 rounded-full transition-all ${
+                currentView === AppView.GOALS 
+                  ? 'bg-pop-yellow text-pop-dark shadow-md' 
+                  : 'text-gray-400 hover:bg-gray-100 hover:text-pop-yellow'
+              }`}
+              title="My Goals"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                <path fillRule="evenodd" d="M5.166 2.621v.858c-1.035.148-2.059.33-3.071.543a.75.75 0 0 0-.584.859 6.753 6.753 0 0 0 6.138 5.625v1.921a2.625 2.625 0 0 0-1.896 2.532v.017c0 .828.336 1.586.875 2.124a3 3 0 0 0-4.072-.218.75.75 0 1 0-1.01 1.108 4.5 4.5 0 0 1 5.485.492.75.75 0 0 0 1.135-.089c.905-1.144 2.13-1.84 3.447-1.84 1.317 0 2.542.696 3.447 1.84a.75.75 0 0 0 1.135.088 4.5 4.5 0 0 1 5.485-.492.75.75 0 1 0-1.01-1.108 3 3 0 0 0-4.072.218c.539-.538.875-1.296.875-2.124v-.017a2.625 2.625 0 0 0-1.896-2.532v-1.92a6.753 6.753 0 0 0 6.138-5.626.75.75 0 0 0-.584-.86 41.376 41.376 0 0 0-3.071-.542v-.858a.75.75 0 0 0-.75-.75h-12.75a.75.75 0 0 0-.75.75Zm3.368 6.463c-1.353-.196-2.61-.593-3.738-1.15A5.254 5.254 0 0 1 6.566 4.75h.968v4.334ZM16.466 4.75h.968a5.254 5.254 0 0 1-1.962 3.184c-1.128.557-2.385.954-3.738 1.15V4.75Z" clipRule="evenodd" />
+              </svg>
             </button>
           </nav>
         </div>

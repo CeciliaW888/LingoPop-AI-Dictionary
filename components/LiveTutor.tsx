@@ -6,16 +6,22 @@ interface LiveTutorProps {
   nativeLang: Language;
   targetLang: Language;
   onBack: () => void;
+  goals?: string[];
 }
 
-export const LiveTutor: React.FC<LiveTutorProps> = ({ nativeLang, targetLang, onBack }) => {
+export const LiveTutor: React.FC<LiveTutorProps> = ({ nativeLang, targetLang, onBack, goals = [] }) => {
   const [isActive, setIsActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [subtitles, setSubtitles] = useState<{user: string, ai: string}>({ user: '', ai: '' });
+  const [selectedGoal, setSelectedGoal] = useState<string | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sessionRef = useRef<LiveSession | null>(null);
   const frameIntervalRef = useRef<number | null>(null);
+  
+  // Safe access to goals
+  const safeGoals = Array.isArray(goals) ? goals : [];
 
   // Initialize session
   useEffect(() => {
@@ -28,6 +34,7 @@ export const LiveTutor: React.FC<LiveTutorProps> = ({ nativeLang, targetLang, on
 
   const startSession = async () => {
     setError(null);
+    setSubtitles({ user: '', ai: '' });
     try {
       // 1. Start Video Locally
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -40,6 +47,8 @@ export const LiveTutor: React.FC<LiveTutorProps> = ({ nativeLang, targetLang, on
       await sessionRef.current?.connect(
         nativeLang.name,
         targetLang.name,
+        selectedGoal, // Pass the selected goal
+        (user, ai) => setSubtitles({ user, ai }),
         (err) => setError("Connection error: " + err.message),
         () => setIsActive(false)
       );
@@ -57,6 +66,7 @@ export const LiveTutor: React.FC<LiveTutorProps> = ({ nativeLang, targetLang, on
 
   const stopSession = () => {
     setIsActive(false);
+    setSubtitles({ user: '', ai: '' });
     
     // Stop local video
     if (videoRef.current && videoRef.current.srcObject) {
@@ -132,24 +142,67 @@ export const LiveTutor: React.FC<LiveTutorProps> = ({ nativeLang, targetLang, on
         {/* Hidden Canvas for processing */}
         <canvas ref={canvasRef} className="hidden" />
 
+        {/* Subtitles Overlay */}
+        {isActive && (subtitles.user || subtitles.ai) && (
+             <div className="absolute bottom-40 md:bottom-48 left-0 right-0 px-4 md:px-8 flex flex-col gap-3 pointer-events-none z-10">
+                 {subtitles.user && (
+                    <div className="self-end bg-pop-blue/90 backdrop-blur-sm text-white px-5 py-3 rounded-2xl rounded-tr-none max-w-[85%] md:max-w-[70%] animate-fade-in-up shadow-lg border border-white/10">
+                        <p className="text-xs font-bold opacity-75 uppercase tracking-wide mb-1">You</p>
+                        <p className="text-lg leading-snug">{subtitles.user}</p>
+                    </div>
+                 )}
+                 {subtitles.ai && (
+                    <div className="self-start bg-pop-dark/90 backdrop-blur-sm text-white px-5 py-3 rounded-2xl rounded-tl-none max-w-[85%] md:max-w-[70%] animate-fade-in-up shadow-lg border border-white/10">
+                        <p className="text-xs font-bold text-pop-yellow uppercase tracking-wide mb-1">Tutor</p>
+                        <p className="text-lg leading-snug">{subtitles.ai}</p>
+                    </div>
+                 )}
+             </div>
+        )}
+
         {/* Overlay Controls */}
-        <div className="absolute inset-x-0 bottom-0 p-8 bg-gradient-to-t from-black/80 to-transparent flex flex-col items-center justify-end gap-6">
+        <div className="absolute inset-x-0 bottom-0 p-8 bg-gradient-to-t from-black/90 via-black/40 to-transparent flex flex-col items-center justify-end gap-6 pt-24 z-20">
            {error && (
-             <div className="bg-red-500/90 text-white px-4 py-2 rounded-lg text-sm font-bold mb-4">
+             <div className="bg-red-500/90 text-white px-4 py-2 rounded-lg text-sm font-bold mb-4 animate-bounce">
                {error}
              </div>
            )}
 
            {!isActive ? (
-             <button 
-              onClick={startSession}
-              className="bg-pop-green hover:bg-green-500 text-white font-display font-bold text-xl px-12 py-4 rounded-full shadow-lg transform transition-all hover:scale-105 active:scale-95 flex items-center gap-3"
-             >
-               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
-                 <path d="M4.5 4.5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h8.25a3 3 0 0 0 3-3v-9a3 3 0 0 0-3-3H4.5ZM19.94 18.75l-2.69-2.69V7.94l2.69-2.69c.944-.945 2.56-.276 2.56 1.06v11.38c0 1.336-1.616 2.005-2.56 1.06Z" />
-               </svg>
-               Start Live Tutor
-             </button>
+             <div className="flex flex-col items-center gap-4 w-full">
+               
+               {/* Goal Selection before starting */}
+               {safeGoals.length > 0 && (
+                 <div className="flex flex-wrap justify-center gap-2 mb-2 max-w-lg">
+                   <div className="w-full text-center text-white/80 text-xs font-bold uppercase tracking-wider mb-1">
+                     Optional: Pick a focus topic
+                   </div>
+                   {safeGoals.map(goal => (
+                     <button
+                       key={goal}
+                       onClick={() => setSelectedGoal(selectedGoal === goal ? null : goal)}
+                       className={`px-3 py-1.5 rounded-full text-sm font-bold transition-all border ${
+                         selectedGoal === goal 
+                           ? 'bg-pop-yellow text-pop-dark border-pop-yellow' 
+                           : 'bg-black/40 text-white border-white/30 hover:bg-black/60'
+                       }`}
+                     >
+                       {goal}
+                     </button>
+                   ))}
+                 </div>
+               )}
+
+               <button 
+                onClick={startSession}
+                className="bg-pop-green hover:bg-green-500 text-white font-display font-bold text-xl px-12 py-4 rounded-full shadow-lg transform transition-all hover:scale-105 active:scale-95 flex items-center gap-3"
+               >
+                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
+                   <path d="M4.5 4.5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h8.25a3 3 0 0 0 3-3v-9a3 3 0 0 0-3-3H4.5ZM19.94 18.75l-2.69-2.69V7.94l2.69-2.69c.944-.945 2.56-.276 2.56 1.06v11.38c0 1.336-1.616 2.005-2.56 1.06Z" />
+                 </svg>
+                 Start Live Tutor
+               </button>
+             </div>
            ) : (
              <button 
               onClick={stopSession}
@@ -164,7 +217,7 @@ export const LiveTutor: React.FC<LiveTutorProps> = ({ nativeLang, targetLang, on
 
            <p className="text-white/80 text-sm font-medium text-center max-w-md">
              {isActive 
-               ? `Speaking ${targetLang.name}. Show me objects or just chat!` 
+               ? (selectedGoal ? `Focusing on: "${selectedGoal}"` : `Speaking ${targetLang.name}. Show me objects or just chat!`)
                : `Practice ${targetLang.name} with a real-time AI tutor.`}
            </p>
         </div>

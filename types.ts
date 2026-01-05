@@ -5,6 +5,7 @@ export enum AppView {
   STORY = 'STORY',
   STUDY = 'STUDY',
   LIVE = 'LIVE',
+  GOALS = 'GOALS',
 }
 
 export interface Language {

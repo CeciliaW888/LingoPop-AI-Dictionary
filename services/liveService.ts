@@ -11,6 +11,11 @@ export class LiveSession {
   private inputStream: MediaStream | null = null;
   private processor: ScriptProcessorNode | null = null;
   private isConnected = false;
+  
+  // Transcription State
+  private currentInputTranscription = '';
+  private currentOutputTranscription = '';
+  private onTranscription: ((user: string, ai: string) => void) | null = null;
 
   constructor() {
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -19,6 +24,8 @@ export class LiveSession {
   async connect(
     nativeLang: string, 
     targetLang: string, 
+    activeGoal: string | null,
+    onTranscription: (user: string, ai: string) => void,
     onError: (err: any) => void,
     onClose: () => void
   ) {
@@ -26,6 +33,9 @@ export class LiveSession {
 
     this.isConnected = true;
     this.nextStartTime = 0;
+    this.currentInputTranscription = '';
+    this.currentOutputTranscription = '';
+    this.onTranscription = onTranscription;
 
     // 1. Audio Setup
     this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -35,17 +45,21 @@ export class LiveSession {
     this.inputStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     
     // 2. Connect to Gemini Live
+    const systemInstruction = `You are a friendly language tutor. The user speaks ${nativeLang} and is learning ${targetLang}. 
+    You can see what the user is showing you via their camera. 
+    ${activeGoal ? `The user has a specific learning goal: "${activeGoal}". Focus the roleplay, vocabulary, and conversation strictly around this topic.` : 'Help them name objects, practice pronunciation, or have a casual conversation.'}
+    Keep responses concise, encouraging, and suitable for a learner.`;
+
     const config = {
       model: 'gemini-2.5-flash-native-audio-preview-09-2025',
       config: {
         responseModalities: [Modality.AUDIO],
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
         },
-        systemInstruction: `You are a friendly language tutor. The user speaks ${nativeLang} and is learning ${targetLang}. 
-        You can see what the user is showing you via their camera. 
-        Help them name objects, practice pronunciation, or have a casual conversation in ${targetLang}.
-        Keep responses concise and encouraging.`,
+        systemInstruction: systemInstruction,
       },
     };
 
@@ -116,15 +130,32 @@ export class LiveSession {
   }
 
   private async handleServerMessage(message: LiveServerMessage) {
-    if (!this.outputAudioContext) return;
-
     const serverContent = message.serverContent;
+
+    // Handle Transcription
+    if (serverContent?.outputTranscription) {
+      this.currentOutputTranscription += serverContent.outputTranscription.text;
+      this.onTranscription?.(this.currentInputTranscription, this.currentOutputTranscription);
+    } else if (serverContent?.inputTranscription) {
+      this.currentInputTranscription += serverContent.inputTranscription.text;
+      this.onTranscription?.(this.currentInputTranscription, this.currentOutputTranscription);
+    }
+
+    if (serverContent?.turnComplete) {
+      // Clear internal buffers for the next turn, but don't wipe the UI immediately
+      // so the user can read the last sentence.
+      this.currentInputTranscription = '';
+      this.currentOutputTranscription = '';
+    }
+
+    if (!this.outputAudioContext) return;
 
     // Handle Interruption
     if (serverContent?.interrupted) {
       this.sources.forEach(source => source.stop());
       this.sources.clear();
       this.nextStartTime = 0;
+      this.currentOutputTranscription = ''; // Clear output text on interrupt
       return;
     }
 
@@ -176,6 +207,7 @@ export class LiveSession {
 
   disconnect() {
     this.isConnected = false;
+    this.onTranscription = null;
     
     // Close session
     this.sessionPromise?.then(session => session.close());
