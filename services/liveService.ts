@@ -16,6 +16,7 @@ export class LiveSession {
   private currentInputTranscription = '';
   private currentOutputTranscription = '';
   private onTranscription: ((user: string, ai: string) => void) | null = null;
+  private onTurnComplete: ((user: string, ai: string) => void) | null = null;
 
   constructor() {
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -27,7 +28,8 @@ export class LiveSession {
     activeGoal: string | null,
     onTranscription: (user: string, ai: string) => void,
     onError: (err: any) => void,
-    onClose: () => void
+    onClose: () => void,
+    onTurnComplete?: (user: string, ai: string) => void
   ) {
     if (this.isConnected) return;
 
@@ -36,6 +38,7 @@ export class LiveSession {
     this.currentInputTranscription = '';
     this.currentOutputTranscription = '';
     this.onTranscription = onTranscription;
+    this.onTurnComplete = onTurnComplete || null;
 
     // 1. Audio Setup
     this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -46,9 +49,9 @@ export class LiveSession {
     
     // 2. Connect to Gemini Live
     const systemInstruction = `You are a friendly language tutor. The user speaks ${nativeLang} and is learning ${targetLang}. 
-    You can see what the user is showing you via their camera. 
     ${activeGoal ? `The user has a specific learning goal: "${activeGoal}". Focus the roleplay, vocabulary, and conversation strictly around this topic.` : 'Help them name objects, practice pronunciation, or have a casual conversation.'}
-    Keep responses concise, encouraging, and suitable for a learner.`;
+    Keep responses concise, encouraging, and suitable for a learner. 
+    If the user makes a mistake, gently correct them.`;
 
     const config = {
       model: 'gemini-2.5-flash-native-audio-preview-09-2025',
@@ -142,8 +145,10 @@ export class LiveSession {
     }
 
     if (serverContent?.turnComplete) {
-      // Clear internal buffers for the next turn, but don't wipe the UI immediately
-      // so the user can read the last sentence.
+      if (this.onTurnComplete && (this.currentInputTranscription || this.currentOutputTranscription)) {
+          this.onTurnComplete(this.currentInputTranscription, this.currentOutputTranscription);
+      }
+      // Clear internal buffers for the next turn
       this.currentInputTranscription = '';
       this.currentOutputTranscription = '';
     }
@@ -208,6 +213,7 @@ export class LiveSession {
   disconnect() {
     this.isConnected = false;
     this.onTranscription = null;
+    this.onTurnComplete = null;
     
     // Close session
     this.sessionPromise?.then(session => session.close());
