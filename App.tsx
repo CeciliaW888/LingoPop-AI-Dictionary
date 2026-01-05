@@ -7,6 +7,7 @@ import { ResultCard } from './components/ResultCard';
 import { Notebook } from './components/Notebook';
 import { StudyMode } from './components/StudyMode';
 import { StoryGenerator } from './components/StoryGenerator';
+import { LiveTutor } from './components/LiveTutor';
 import { useToast } from './context/ToastContext';
 import { storageService } from './services/storageService';
 
@@ -169,6 +170,14 @@ const App: React.FC = () => {
             onBack={() => setCurrentView(AppView.NOTEBOOK)}
           />
         );
+      case AppView.LIVE:
+        return (
+          <LiveTutor 
+             nativeLang={nativeLang}
+             targetLang={targetLang}
+             onBack={() => setCurrentView(AppView.HOME)}
+          />
+        );
       default:
         return null;
     }
@@ -199,6 +208,20 @@ const App: React.FC = () => {
               }`}
             >
               Search
+            </button>
+             <button
+              onClick={() => setCurrentView(AppView.LIVE)}
+              className={`px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center space-x-2 ${
+                currentView === AppView.LIVE
+                  ? 'bg-pop-green text-white shadow-md' 
+                  : 'text-gray-500 hover:bg-gray-100'
+              }`}
+            >
+              <span className="relative flex h-3 w-3 mr-1">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+              </span>
+              <span>Live</span>
             </button>
             <button
               onClick={() => setCurrentView(AppView.NOTEBOOK)}

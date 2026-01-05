@@ -1,8 +1,10 @@
+
 export enum AppView {
   HOME = 'HOME',
   NOTEBOOK = 'NOTEBOOK',
   STORY = 'STORY',
   STUDY = 'STUDY',
+  LIVE = 'LIVE',
 }
 
 export interface Language {

@@ -1,10 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { generateSpeech } from '../services/geminiService';
+import { generateSpeech, decodePcmAudio } from '../services/geminiService';
 
 interface AudioButtonProps {
   text: string;
   size?: 'sm' | 'md';
 }
+
+// Global cache to persist audio between renders/navigation
+const audioCache = new Map<string, AudioBuffer>();
 
 export const AudioButton: React.FC<AudioButtonProps> = ({ text, size = 'md' }) => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -13,15 +16,15 @@ export const AudioButton: React.FC<AudioButtonProps> = ({ text, size = 'md' }) =
 
   useEffect(() => {
     return () => {
-      // Cleanup
       if (audioContextRef.current) {
         audioContextRef.current.close();
+        audioContextRef.current = null;
       }
     };
   }, []);
 
   const playAudio = async () => {
-    if (isPlaying || isLoading) return;
+    if (isPlaying || isLoading || !text) return;
 
     try {
       setIsLoading(true);
@@ -35,12 +38,17 @@ export const AudioButton: React.FC<AudioButtonProps> = ({ text, size = 'md' }) =
         await audioContextRef.current.resume();
       }
 
-      const audioBufferData = await generateSpeech(text);
-      
-      const audioBuffer = await audioContextRef.current.decodeAudioData(audioBufferData);
-      
+      let buffer = audioCache.get(text);
+
+      if (!buffer) {
+        // Fetch and decode if not in cache
+        const pcmData = await generateSpeech(text);
+        buffer = decodePcmAudio(pcmData, audioContextRef.current);
+        audioCache.set(text, buffer);
+      }
+
       const source = audioContextRef.current.createBufferSource();
-      source.buffer = audioBuffer;
+      source.buffer = buffer;
       source.connect(audioContextRef.current.destination);
       
       source.onended = () => {
@@ -59,8 +67,8 @@ export const AudioButton: React.FC<AudioButtonProps> = ({ text, size = 'md' }) =
 
   const iconSize = size === 'sm' ? 'w-4 h-4' : 'w-6 h-6';
   const buttonClass = size === 'sm' 
-    ? "p-2 bg-gray-100 hover:bg-pop-blue hover:text-white rounded-full transition-colors text-gray-500" 
-    : "p-3 bg-pop-blue text-white rounded-full shadow-lg hover:bg-blue-600 transition-all transform hover:scale-105";
+    ? "p-2 bg-gray-100 hover:bg-pop-blue hover:text-white rounded-full transition-colors text-gray-500 flex-shrink-0" 
+    : "p-3 bg-pop-blue text-white rounded-full shadow-lg hover:bg-blue-600 transition-all transform hover:scale-105 flex-shrink-0";
 
   return (
     <button 

@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, Modality, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { DictionaryEntry, ExampleSentence } from "../types";
 
 // Initialize Gemini Client
@@ -117,33 +117,75 @@ export const generateImage = async (term: string): Promise<string | undefined> =
 
 // --- Audio Generation (TTS) ---
 
-export const generateSpeech = async (text: string): Promise<ArrayBuffer> => {
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text }] }],
-    config: {
-      responseModalities: ["AUDIO"],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: "Puck" }, // Puck is usually energetic/fun
+export const generateSpeech = async (text: string): Promise<Uint8Array> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: "Puck" }, // Puck is usually energetic/fun
+          },
         },
+        // Relax safety settings to prevent blocking pronunciation of simple words
+        safetySettings: [
+           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+           { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+           { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ]
       },
-    },
-  });
+    });
 
-  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!base64Audio) {
-    throw new Error("No audio data returned");
-  }
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!base64Audio) {
+      // Sometimes if the audio generation fails gracefully, it might return text explaining why.
+      const textPart = response.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (textPart) {
+        console.warn("TTS returned text instead of audio:", textPart);
+      }
+      throw new Error("No audio data returned from Gemini TTS");
+    }
 
-  // Decode base64 to ArrayBuffer
-  const binaryString = atob(base64Audio);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+    // Decode base64 to Uint8Array
+    const binaryString = atob(base64Audio);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  } catch (err) {
+    console.error("Gemini TTS Error:", err);
+    throw err;
   }
-  return bytes.buffer;
+};
+
+// Helper to decode raw PCM data from Gemini to an AudioBuffer
+export const decodePcmAudio = (
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number = 24000
+): AudioBuffer => {
+  // Ensure we are reading 16-bit boundaries correctly
+  // We use data.buffer with byteOffset and length to be safe if 'data' is a view
+  const dataInt16 = new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2);
+  
+  const numChannels = 1;
+  const frameCount = dataInt16.length / numChannels;
+  
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+  
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      // Normalizing int16 range to float [-1.0, 1.0]
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
 };
 
 // --- Story Generation ---
