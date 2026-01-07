@@ -1,25 +1,22 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { generateSpeech, decodePcmAudio } from '../services/geminiService';
+import React, { useState, useEffect } from 'react';
+import { generateSpeech, pcmToWav } from '../services/geminiService';
 
 interface AudioButtonProps {
   text: string;
   size?: 'sm' | 'md';
 }
 
-// Global cache to persist audio between renders/navigation
-const audioCache = new Map<string, AudioBuffer>();
+// Global cache for Blob URLs to prevent re-fetching
+const audioUrlCache = new Map<string, string>();
 
 export const AudioButton: React.FC<AudioButtonProps> = ({ text, size = 'md' }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const audioContextRef = useRef<AudioContext | null>(null);
 
+  // Clean up blob URLs when component unmounts (optional, but good practice if app grows)
   useEffect(() => {
     return () => {
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
-      }
+      // We keep the cache alive for the session to save API calls
     };
   }, []);
 
@@ -29,37 +26,35 @@ export const AudioButton: React.FC<AudioButtonProps> = ({ text, size = 'md' }) =
     try {
       setIsLoading(true);
       
-      // Initialize AudioContext on user interaction
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
-      }
+      let audioUrl = audioUrlCache.get(text);
 
-      if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
-
-      let buffer = audioCache.get(text);
-
-      if (!buffer) {
-        // Fetch and decode if not in cache
+      if (!audioUrl) {
+        // Fetch raw PCM
         const pcmData = await generateSpeech(text);
-        buffer = decodePcmAudio(pcmData, audioContextRef.current);
-        audioCache.set(text, buffer);
+        // Convert to WAV Blob
+        const wavBlob = pcmToWav(pcmData, 24000);
+        // Create URL
+        audioUrl = URL.createObjectURL(wavBlob);
+        audioUrlCache.set(text, audioUrl);
       }
 
-      const source = audioContextRef.current.createBufferSource();
-      source.buffer = buffer;
-      source.connect(audioContextRef.current.destination);
+      const audio = new Audio(audioUrl);
       
-      source.onended = () => {
+      audio.onended = () => {
         setIsPlaying(false);
       };
 
-      source.start(0);
+      audio.onerror = (e) => {
+        console.error("Audio playback error:", e);
+        setIsPlaying(false);
+      };
+
+      // Play
+      await audio.play();
       setIsPlaying(true);
       
     } catch (error) {
-      console.error("Audio playback error:", error);
+      console.error("Audio generation error:", error);
     } finally {
       setIsLoading(false);
     }

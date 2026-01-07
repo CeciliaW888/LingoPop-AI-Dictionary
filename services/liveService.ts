@@ -40,61 +40,85 @@ export class LiveSession {
     this.onTranscription = onTranscription;
     this.onTurnComplete = onTurnComplete || null;
 
-    // 1. Audio Setup
-    this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-    this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-    
-    // Get Mic Stream
-    this.inputStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    
-    // 2. Connect to Gemini Live
-    const systemInstruction = `You are a friendly language tutor. The user speaks ${nativeLang} and is learning ${targetLang}. 
-    ${activeGoal ? `The user has a specific learning goal: "${activeGoal}". Focus the roleplay, vocabulary, and conversation strictly around this topic.` : 'Help them name objects, practice pronunciation, or have a casual conversation.'}
-    Keep responses concise, encouraging, and suitable for a learner. 
-    If the user makes a mistake, gently correct them.`;
+    try {
+      // 1. Audio Setup
+      // Initialize Output Context (Speaker)
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      this.outputAudioContext = new AudioContextClass();
+      
+      // Initialize Input Context (Microphone)
+      // Try to get 16000Hz as preferred by Gemini Live
+      try {
+        this.inputAudioContext = new AudioContextClass({ sampleRate: 16000 });
+      } catch (e) {
+        console.warn("Could not create 16kHz context, falling back to default.", e);
+        this.inputAudioContext = new AudioContextClass();
+      }
+      
+      // CRITICAL: Resume output context immediately. 
+      if (this.outputAudioContext.state === 'suspended') {
+        await this.outputAudioContext.resume();
+      }
 
-    const config = {
-      model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-      config: {
-        responseModalities: [Modality.AUDIO],
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
-        },
-        systemInstruction: systemInstruction,
-      },
-    };
+      // Get Mic Stream
+      this.inputStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // 2. Connect to Gemini Live
+      const systemInstruction = `You are a friendly language tutor. The user speaks ${nativeLang} and is learning ${targetLang}. 
+      ${activeGoal ? `The user has a specific learning goal: "${activeGoal}". Focus the roleplay, vocabulary, and conversation strictly around this topic.` : 'Help them name objects, practice pronunciation, or have a casual conversation.'}
+      Keep responses concise, encouraging, and suitable for a learner. 
+      If the user makes a mistake, gently correct them.
+      IMPORTANT: The conversation will ONLY be in ${nativeLang} or ${targetLang}. Do not switch to other languages or hallucinate words from other languages.`;
 
-    this.sessionPromise = this.ai.live.connect({
-      model: config.model,
-      config: config.config,
-      callbacks: {
-        onopen: () => {
-          console.log("Live session opened");
-          this.startAudioInput();
+      const config = {
+        model: 'gemini-2.0-flash-exp',
+        config: {
+          responseModalities: [Modality.AUDIO],
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+          },
+          systemInstruction: systemInstruction,
         },
-        onmessage: async (message: LiveServerMessage) => {
-          this.handleServerMessage(message);
+      };
+
+      this.sessionPromise = this.ai.live.connect({
+        model: config.model,
+        config: config.config,
+        callbacks: {
+          onopen: () => {
+            console.log("Live session opened");
+            this.startAudioInput();
+          },
+          onmessage: async (message: LiveServerMessage) => {
+            this.handleServerMessage(message);
+          },
+          onerror: (e: any) => {
+            console.error("Live session error:", e);
+            onError(e);
+          },
+          onclose: () => {
+            console.log("Live session closed");
+            this.disconnect();
+            onClose();
+          },
         },
-        onerror: (e: any) => {
-          console.error("Live session error:", e);
-          onError(e);
-        },
-        onclose: () => {
-          console.log("Live session closed");
-          this.disconnect(); // Ensure cleanup
-          onClose();
-        },
-      },
-    });
+      });
+    } catch (err) {
+      onError(err);
+      this.disconnect();
+    }
   }
 
   private startAudioInput() {
     if (!this.inputAudioContext || !this.inputStream || !this.sessionPromise) return;
 
+    if (this.inputAudioContext.state === 'suspended') {
+      this.inputAudioContext.resume();
+    }
+
     const source = this.inputAudioContext.createMediaStreamSource(this.inputStream);
-    // Use ScriptProcessor for raw PCM access (standard for this API usage)
     this.processor = this.inputAudioContext.createScriptProcessor(4096, 1, 1);
 
     this.processor.onaudioprocess = (e) => {
@@ -117,7 +141,6 @@ export class LiveSession {
       int16[i] = data[i] * 32768;
     }
     
-    // Manually encode to base64 string
     let binary = '';
     const bytes = new Uint8Array(int16.buffer);
     const len = bytes.byteLength;
@@ -135,7 +158,6 @@ export class LiveSession {
   private async handleServerMessage(message: LiveServerMessage) {
     const serverContent = message.serverContent;
 
-    // Handle Transcription
     if (serverContent?.outputTranscription) {
       this.currentOutputTranscription += serverContent.outputTranscription.text;
       this.onTranscription?.(this.currentInputTranscription, this.currentOutputTranscription);
@@ -148,26 +170,22 @@ export class LiveSession {
       if (this.onTurnComplete && (this.currentInputTranscription || this.currentOutputTranscription)) {
           this.onTurnComplete(this.currentInputTranscription, this.currentOutputTranscription);
       }
-      // Clear internal buffers for the next turn
       this.currentInputTranscription = '';
       this.currentOutputTranscription = '';
     }
 
     if (!this.outputAudioContext) return;
 
-    // Handle Interruption
     if (serverContent?.interrupted) {
       this.sources.forEach(source => source.stop());
       this.sources.clear();
       this.nextStartTime = 0;
-      this.currentOutputTranscription = ''; // Clear output text on interrupt
+      this.currentOutputTranscription = '';
       return;
     }
 
-    // Handle Audio Output
     const base64Audio = serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
     if (base64Audio) {
-       // Decode base64 manually to Uint8Array first
       const binaryString = atob(base64Audio);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
@@ -175,7 +193,7 @@ export class LiveSession {
         bytes[i] = binaryString.charCodeAt(i);
       }
 
-      // Use the helper from geminiService to get AudioBuffer
+      // Robust decoding using the helper
       const audioBuffer = decodePcmAudio(bytes, this.outputAudioContext, 24000);
       
       this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
@@ -196,10 +214,7 @@ export class LiveSession {
 
   sendVideoFrame(base64Data: string) {
     if (!this.sessionPromise || !this.isConnected) return;
-    
-    // Strip header if present (e.g. "data:image/jpeg;base64,")
     const cleanBase64 = base64Data.split(',')[1] || base64Data;
-
     this.sessionPromise.then(session => {
       session.sendRealtimeInput({
         media: {
@@ -215,19 +230,15 @@ export class LiveSession {
     this.onTranscription = null;
     this.onTurnComplete = null;
     
-    // Close session
     this.sessionPromise?.then(session => session.close());
     this.sessionPromise = null;
 
-    // Stop tracks
     this.inputStream?.getTracks().forEach(track => track.stop());
     this.inputStream = null;
 
-    // Disconnect audio nodes
     this.processor?.disconnect();
     this.processor = null;
 
-    // Close contexts
     this.inputAudioContext?.close();
     this.outputAudioContext?.close();
     this.inputAudioContext = null;
